@@ -1,0 +1,488 @@
+library(ggplot2)
+library(lme4) #for regression analysis
+library(dplyr)
+library(stringr)
+library(Hmisc) ##for correlation analysis w p values 
+library(glmnet)
+library(randomForest)
+library(tidyverse)
+
+
+ellie_self_rating <- read.csv("/Users/boneless-tofu/Desktop/T_release (2024)/Ellie_tidy+data.csv")
+
+ellie_self_rating <- tibble(
+  attribute = c("Fem", "Masc", "Intelligent", "Authoritative", "Youthful", "Energetic", "Articulate", 
+                "Educated", "Straight", "Queer", "Asian", "White"),
+  Released = c(4, 4, 5, 5, 3, 5, 5, 4, 4, 4, 4, 4),
+  Unreleased = c(4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4)
+)
+
+
+##actually released and unreleased should be one column 
+df_long <- ellie_self_rating %>%
+  gather(key = "variant", value = "rating", Released, Unreleased) %>%
+  mutate(variant = recode(variant, Released = "Released", Unreleased = "Unreleased"))
+
+#dumbell plot of scale results for ellie's self-ratings 
+ggplot(df_long, aes(x = rating, y = attribute, group = attribute, color = variant)) +
+  geom_point(aes(color = variant), size = 3) +  # Points for Released and Unreleased
+  geom_segment(aes(x = rating, xend = rating, yend = attribute),
+               size = 1, alpha = 0.5) +  # Connecting lines for the ratings
+  scale_color_manual(values = c("Released" = "orange", "Unreleased" = "purple")) +  # Updated colors
+  scale_x_continuous(limits = c(1, 7), breaks = seq(1, 7, 1)) +  # Scale x-axis from 1 to 7
+  theme_minimal() +
+  theme(
+    text = element_text(size = 14),  # General text size
+    axis.title = element_text(size = 16),  # Axis title size
+    axis.text = element_text(size = 14),  # Axis text size
+    plot.title = element_text(size = 20, face = "bold")  # Title size and style
+  ) +
+  labs(
+    title = "Self-Rating by Variant and Scale",
+    x = "Rating",
+    y = "Scale"
+  )
+
+
+##looking at listener data now 
+data <- read.csv("/Users/boneless-tofu/Downloads/t-release, ADS remix!_August 15, 2024_15.43 2.csv")
+
+##delete R2 
+data <- data[-2, ]
+
+#renaming columns from the confusing qualtrics outputs 
+names(data)[names(data) == "Q144"] <- "LisenerRecognizeVoice"
+names(data)[names(data) == "Q137"] <- "ListenerAge"
+names(data)[names(data) == "Q35"] <- "ListenerRegion"
+names(data)[names(data) == "Q19"] <- "LisenerSES"
+names(data)[names(data) == "Q18"] <- "ListenerSexuality"
+names(data)[names(data) == "Q17"] <- "ListenerGender"
+names(data)[names(data) == "Q16"] <- "ListenerRace"
+names(data)[names(data) == "Q40_released_1"] <- "ReleasedFem"
+names(data)[names(data) == "Q40_released_2"] <- "ReleasedMasc"
+names(data)[names(data) == "Q40_released_3"] <- "ReleasedIntelligent"
+names(data)[names(data) == "Q40_released_4"] <- "ReleasedAuthoritative"
+names(data)[names(data) == "Q40_released_5"] <- "ReleasedYouthful"
+names(data)[names(data) == "Q40_released_6"] <- "ReleasedEnergetic"
+names(data)[names(data) == "Q40_released_7"] <- "ReleasedArticulate"
+names(data)[names(data) == "Q40_released_8"] <- "ReleasedEducated"
+names(data)[names(data) == "Q40_released_9"] <- "ReleasedAsian"
+names(data)[names(data) == "Q40_released_10"] <- "ReleasedWhite"
+names(data)[names(data) == "Q40_released_11"] <- "ReleasedQueer"
+names(data)[names(data) == "Q40_released_12"] <- "ReleasedStraight"
+names(data)[names(data) == "Q38_released"] <- "ReleasedSES"
+names(data)[names(data) == "Q26_released"] <- "ReleasedRegion"
+names(data)[names(data) == "Q40_released"] <- "Released"
+names(data)[names(data) == "Q37_unreleased_1"] <- "UnreleasedFem"
+names(data)[names(data) == "Q37_unreleased_2"] <- "UnreleasedMasc"
+names(data)[names(data) == "Q37_unreleased_3"] <- "UnreleasedIntelligent"
+names(data)[names(data) == "Q37_unreleased_4"] <- "UnreleasedAuthoritative"
+names(data)[names(data) == "Q37_unreleased_5"] <- "UnreleasedYouthful"
+names(data)[names(data) == "Q37_unreleased_6"] <- "UnreleasedEnergetic"
+names(data)[names(data) == "Q37_unreleased_7"] <- "UnreleasedArticulate"
+names(data)[names(data) == "Q37_unreleased_8"] <- "UnreleasedEducated"
+names(data)[names(data) == "Q37_unreleased_9"] <- "UnreleasedStraight"
+names(data)[names(data) == "Q37_unreleased_10"] <- "UnreleasedQueer"
+names(data)[names(data) == "Q37_unreleased_11"] <- "UnreleasedAsian"
+names(data)[names(data) == "Q37_unreleased_12"] <- "UnreleasedWhite"
+names(data)[names(data) == "Q30_unreleased"] <- "UnreleasedSES"
+names(data)[names(data) == "Q39_unreleased"] <- "UnreleasedRegion"
+
+##create a new column called Variant. If there are data in the ReleasedFem column, 
+##make the row in the Variant column say "Released". If there are data in the UnreleasedFem column,
+##make the row in the Variant column say "Unreleased"
+
+data <- data %>%
+  mutate(Variant = case_when(
+    !is.na(ReleasedFem) & ReleasedFem != "" ~ "Released",
+    !is.na(UnreleasedFem) & UnreleasedFem != "" ~ "Unreleased",
+    TRUE ~ NA_character_  # Use NA if both columns are empty
+  ))
+
+data$Fem <- str_c(data$ReleasedFem, data$UnreleasedFem, sep = "")
+data$Masc <- str_c(data$ReleasedMasc, data$UnreleasedMasc, sep = "")
+data$Intelligent <- str_c(data$ReleasedIntelligent, data$UnreleasedIntelligent, sep = "")
+data$Authoritative <- str_c(data$ReleasedAuthoritative, data$UnreleasedAuthoritative, sep = "")
+data$Youthful <- str_c(data$ReleasedYouthful, data$UnreleasedYouthful, sep = "")
+data$Energetic <- str_c(data$ReleasedEnergetic, data$UnreleasedEnergetic, sep = "")
+data$Articulate <- str_c(data$ReleasedArticulate, data$UnreleasedArticulate, sep = "")
+data$Educated <- str_c(data$ReleasedEducated, data$UnreleasedEducated, sep = "")
+data$Asian <- str_c(data$ReleasedAsian, data$UnreleasedAsian, sep = "")
+data$White <- str_c(data$ReleasedWhite, data$UnreleasedWhite, sep = "")
+data$Queer <- str_c(data$ReleasedQueer, data$UnreleasedQueer, sep = "")
+data$Straight <- str_c(data$ReleasedStraight, data$UnreleasedStraight, sep = "")
+data$SES <- str_c(data$ReleasedSES, data$UnreleasedSES, sep = "")
+data$Region <- str_c(data$ReleasedRegion, data$UnreleasedRegion, sep = "")
+
+
+##subsetting the data to be tidy! 
+tidy_data <- data[, 30:71]
+
+##summarizing the likert scale results by feature. Need to delete the quetions from 
+##the dataset first though 
+data_2 <- tidy_data[-1, ]
+
+data_2 <- data_2 %>%
+  mutate(
+    Masc = as.numeric(Masc),
+    Fem = as.numeric(Fem),
+    Intelligent = as.numeric(Intelligent),
+    Authoritative = as.numeric(Authoritative),
+    Youthful = as.numeric(Youthful),
+    Energetic = as.numeric(Energetic),
+    Articulate = as.numeric(Articulate),
+    Educated = as.numeric(Educated),
+    Asian = as.numeric(Asian),
+    White = as.numeric(White),
+    Queer = as.numeric(Queer),
+    Straight = as.numeric(Straight)
+  )
+
+#looking at listener race 
+counts <- data_2 %>%
+  count(Variant, ListenerRace)
+print(counts)
+
+#looking only at white and asian listeners since they make up the two largest groups in the sample 
+data_subsetted_race <- data_2[data_2$ListenerRace %in% c("Asian", "White"), ]
+View(data_subsetted_race)
+
+##merging ReleasedRegion and UnreleasedRegion to tidy the data 
+library(dplyr)
+data_subsetted_race <- data_subsetted_race %>% mutate(PercievedRegion = paste(UnreleasedRegion, ReleasedRegion))
+
+# Sort and print unique categories
+sorted_categories <- sort(unique(data_subsetted_race$PercievedRegion))
+print(sorted_categories)
+
+#binning region into larger categories that are easier to work with 
+data_subsetted_race <- data_subsetted_race %>%
+  mutate(BinnedRegion = case_when(
+    PercievedRegion == "California " ~ "AWest_Coast",
+    PercievedRegion == "Northwest " ~ "AWest_Coast",
+    PercievedRegion == " Culver City " ~ "AWest_Coast",
+    PercievedRegion == " California" ~ "AWest_Coast",
+    PercievedRegion == " California, Utah" ~ "AWest_Coast",
+    PercievedRegion == "West Coast " ~ "AWest_Coast",
+    PercievedRegion == " West Coast" ~ "AWest_Coast",
+    PercievedRegion == "California  " ~ "AWest_Coast",
+    PercievedRegion == "Northern California " ~ "AWest_Coast",
+    PercievedRegion == "West coast, probably a city " ~ "AWest_Coast",
+    PercievedRegion == " California " ~ "AWest_Coast",
+    PercievedRegion == " PNW" ~ "AWest_Coast",
+    PercievedRegion == " West coast" ~ "AWest_Coast",
+    PercievedRegion == "West coast or further inland  " ~ "AWest_Coast",
+    PercievedRegion == " Mid-atlantic region " ~ "Mid_Atlantic",
+    PercievedRegion == " Virginia" ~ "Mid_Atlantic", 
+    PercievedRegion == "Washington, D.C " ~ "Mid_Atlantic", 
+    PercievedRegion == " EAST COAST" ~ "North_East", 
+    PercievedRegion == " Northeast US" ~ "North_East",
+    PercievedRegion == "East coast  " ~ "North_East",
+    PercievedRegion == "East coast " ~ "North_East",
+    PercievedRegion == " MA" ~ "North_East",
+    PercievedRegion == " Midwest" ~ "Other", 
+    PercievedRegion == "Midwest " ~ "Other", 
+    PercievedRegion == " MA" ~ "North_East",
+    PercievedRegion == "Texas  " ~ "Other",
+     TRUE ~ NA_character_ # Default value for all other cases
+  ))
+
+counts <- data_subsetted_race %>%
+  count(BinnedRegion)
+print(counts)
+
+counts <- data_subsetted_race %>%
+  count(PercievedRegion)
+print(counts)
+
+data_subsetted_race$Variant <- as.factor(data_subsetted_race$Variant)
+data_subsetted_race$BinnedRegion <- as.factor(data_subsetted_race$BinnedRegion)
+
+
+##modeling now 
+Region_model <- glm(Variant ~ BinnedRegion, data = data_subsetted_race, family = "binomial")
+summary(Region_model)
+
+Region_model <- glm(Variant ~ BinnedRegion*ListenerRace, data = data_subsetted_race, family = "binomial")
+summary(Region_model)
+##This is deceptive bc the model is overfitted. Region isn't a significant predictor of Variant, ie. the variant doesn't have an effect on percieved 
+##region  
+
+
+
+# Fitting Random Forest to the train dataset to see which scale is the strongest predictor of the variant.
+Region_RF <- randomForest(
+  x = data_subsetted_race[, c("Fem", "Masc", "Intelligent", "Authoritative", "Youthful", "Energetic", "Articulate", "Educated", "Asian", "White", "Queer", "Straight", "PercievedRegion")],  # Predictor variables
+  y = data_subsetted_race$Variant,  # Target variable
+  ntree = 1000  # Number of trees
+)
+
+plot(Region_RF)
+##yay this is a good sign
+
+importance(Region_RF) 
+
+# Variable importance plot 
+varImpPlot(Region_RF)
+
+
+range(data_subsetted_race$Asian)
+range(data_subsetted_race$White)
+range(data_subsetted_race$Fem)
+#okay it looks like VIMP isn't really a good approach here, as there are many 
+#more categories in percieved region than the range for each scale 
+
+
+
+#transitioning to modeling each scale by testing for the interaction of listener race 
+Masc_model <- glm(Masc ~ Variant*ListenerRace + ListenerRace, data = data_subsetted_race)
+summary(Masc_model)
+
+##race near sig 
+
+Fem_model <- glm(Fem ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(Fem_model)
+
+Intelligent_model <- glm(Intelligent ~ Variant*ListenerRace + BinnedRegion, data = data_subsetted_race)
+summary(Intelligent_model)
+
+Authoritative_model <- glm(Authoritative ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(Authoritative_model)
+##race is significant 
+
+Youthful_model <- glm(Youthful ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(Youthful_model)
+## Variant is significant on its own, also a significant interaction 
+
+Energetic_model <- glm(Energetic ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(Energetic_model)
+##Variant is sig, race is near sig, interaction is significant 
+
+Asian_model <- glm(Asian ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(Asian_model)
+
+White_model <- glm(White ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(White_model)
+##Wowww okay this is a neat finding, interaction of race and variant 
+
+Queer_model <- glm(Queer ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(Queer_model)
+
+Straight_model <- glm(Straight ~ Variant*ListenerRace, data = data_subsetted_race)
+summary(Straight_model)
+
+##descriptive stats for race scale 
+mean_White_byRace <- data_subsetted_race %>%
+  group_by(Variant, ListenerRace) %>%
+  summarise(
+    White = mean(White)
+  )
+
+#visual for the interaction in the race scale, creating similar figures for the other sig findings  
+ggplot(mean_White_byRace, aes(x = Variant, y = White, fill = ListenerRace)) + 
+  geom_bar(stat = "identity", position = "dodge") + 
+  labs(
+    x = "Variant",
+    y = "White",
+    fill = "Listener Race",
+    title = "Mean White Rating by Variant and Listener Race"
+  ) + 
+  theme_minimal() + 
+  theme(
+    text = element_text(size = 16),               # General text size
+    axis.title.x = element_text(size = 25),       # X-axis title size
+    axis.title.y = element_text(size = 25),       # Y-axis title size
+    axis.text.x = element_text(size = 14),        # X-axis tick labels size
+    axis.text.y = element_text(size = 14),        # Y-axis tick labels size
+    legend.title = element_text(size = 16),       # Legend title size
+    legend.text = element_text(size = 14),        # Legend text size
+    plot.title = element_text(size = 20, hjust = 0.5) # Title size and centering
+  ) +
+  scale_fill_manual(values = c("Asian" = "#53B74C", "White" = "#6C9DF8")) +
+  ylim(0, 6)
+
+
+
+mean_Youthful_byRace <- data_subsetted_race %>%
+  group_by(Variant, ListenerRace) %>%
+  summarise(
+    Youthful = mean(Youthful)
+  )
+
+
+ggplot(mean_Youthful_byRace, aes(x = Variant, y = Youthful, fill = ListenerRace)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    x = "Variant",
+    y = "Youthful",
+    fill = "Listener Race",
+    title = "Mean Youthful Rating by Variant and Listener Race"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 16),               # General text size
+    axis.title.x = element_text(size = 25),       # X-axis title size
+    axis.title.y = element_text(size = 25),       # Y-axis title size
+    axis.text.x = element_text(size = 14),        # X-axis tick labels size
+    axis.text.y = element_text(size = 14),        # Y-axis tick labels size
+    legend.title = element_text(size = 16),       # Legend title size
+    legend.text = element_text(size = 14),        # Legend text size
+    plot.title = element_text(size = 20, hjust = 0.5) # Title size and centering
+  ) +
+  scale_fill_manual(values = c("Asian" = "#53B74C", "White" = "#6C9DF8")) +
+  ylim(0, 6)
+
+
+mean_Energetic_byRace <- data_subsetted_race %>%
+  group_by(Variant, ListenerRace) %>%
+  summarise(
+    Energetic = mean(Energetic)
+  )
+
+ggplot(mean_Energetic_byRace, aes(x = Variant, y = Energetic, fill = ListenerRace)) + 
+  geom_bar(stat = "identity", position = "dodge") + 
+  labs(
+    x = "Variant",
+    y = "Energetic",
+    fill = "Listener Race",
+    title = "Mean Eneretic Rating by Variant and Listener Race"
+  ) + 
+  theme_minimal() + 
+  theme(
+    text = element_text(size = 16),               # General text size
+    axis.title.x = element_text(size = 25),       # X-axis title size
+    axis.title.y = element_text(size = 25),       # Y-axis title size
+    axis.text.x = element_text(size = 14),        # X-axis tick labels size
+    axis.text.y = element_text(size = 14),        # Y-axis tick labels size
+    legend.title = element_text(size = 16),       # Legend title size
+    legend.text = element_text(size = 14),        # Legend text size
+    plot.title = element_text(size = 20, hjust = 0.5) # Title size and centering
+  ) +
+  scale_fill_manual(values = c("Asian" = "#53B74C", "White" = "#6C9DF8")) + 
+  ylim(0,6)
+
+
+
+addison_data <- data.frame(
+  Variant = c("Released", "Unreleased"),  # Adjust the name as necessary
+  White = c(4, 4),  # Replace with the actual values
+  Youthful = c(3, 4), 
+  Energetic = c(5, 4), 
+  ListenerRace = c("Addison", "Addison")
+)
+
+#now trying to create figures that compare the talker's self-ratings WTIH the listeners' 
+combined_data_White <- rbind(mean_White_byRace, addison_data)
+combined_data_Energetic <- rbind(mean_Energetic_byRace, addison_data)
+combined_data_Youthful <- rbind(mean_Youthful_byRace, addison_data)
+
+
+ggplot(combined_data_Energetic, aes(x = Variant, y = Energetic, fill = ListenerRace)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    x = "Variant",
+    y = "Energetic",
+    fill = "Listeners",
+    title = "Mean Energetic Rating by Variant and Listener Race"
+  ) +
+  theme_minimal() + 
+  theme(
+    text = element_text(size = 16),               # General text size
+    axis.title.x = element_text(size = 25),       # X-axis title size
+    axis.title.y = element_text(size = 25),       # Y-axis title size
+    axis.text.x = element_text(size = 14),        # X-axis tick labels size
+    axis.text.y = element_text(size = 14),        # Y-axis tick labels size
+    legend.title = element_text(size = 16),       # Legend title size
+    legend.text = element_text(size = 14),        # Legend text size
+    plot.title = element_text(size = 20, hjust = 0.5) # Title size and centering
+  ) + ylim(0,6)
+
+
+
+ggplot(combined_data_Youthful, aes(x = Variant, y = Youthful, fill = ListenerRace)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    x = "Variant",
+    y = "Youthful",
+    fill = "Listener Race",
+    title = "Mean Youthful Rating by Variant and Listener Race"
+  ) +
+  theme_minimal() + 
+  theme(
+    text = element_text(size = 16),               # General text size
+    axis.title.x = element_text(size = 25),       # X-axis title size
+    axis.title.y = element_text(size = 25),       # Y-axis title size
+    axis.text.x = element_text(size = 14),        # X-axis tick labels size
+    axis.text.y = element_text(size = 14),        # Y-axis tick labels size
+    legend.title = element_text(size = 16),       # Legend title size
+    legend.text = element_text(size = 14),        # Legend text size
+    plot.title = element_text(size = 20, hjust = 0.5) # Title size and centering
+  ) + ylim(0,6)
+
+ggplot(combined_data_White, aes(x = Variant, y = White, fill = ListenerRace)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    x = "Variant",
+    y = "White",
+    fill = "Listener Race",
+    title = "Mean White Rating by Variant and Listener Race"
+  ) +
+  theme_minimal() + 
+  theme(
+    text = element_text(size = 16),               # General text size
+    axis.title.x = element_text(size = 25),       # X-axis title size
+    axis.title.y = element_text(size = 25),       # Y-axis title size
+    axis.text.x = element_text(size = 14),        # X-axis tick labels size
+    axis.text.y = element_text(size = 14),        # Y-axis tick labels size
+    legend.title = element_text(size = 16),       # Legend title size
+    legend.text = element_text(size = 14),        # Legend text size
+    plot.title = element_text(size = 20, hjust = 0.5) # Title size and centering
+  ) + ylim(0,6)
+
+
+##looking at the correlations for white talkers
+
+##making white dataset 
+white_data <- data_subsetted_race[data_subsetted_race$ListenerRace %in% c("White"), ]
+  
+
+
+selected_columns <- white_data[, c("Youthful", "Energetic", "White", "Queer",
+                                            "Straight", "Masc", "Fem", "Intelligent", "Authoritative", 
+                                            "Articulate", "Educated", "Asian")]
+
+##getting the correlation strenghts
+cor_results <- rcorr(as.matrix(selected_columns))
+cor_matrix <- cor_results$r
+
+# P-values matrix
+p_values_matrix <- cor_results$P
+
+
+##getting the p values for the correlation strenghts 
+cor.test()
+
+res.cor <- correlate(selected_columns)
+selected_columns %>% correlate() %>% 
+  network_plot
+
+
+##Asian_data 
+asian_data <- data_subsetted_race[data_subsetted_race$ListenerRace %in% c("Asian"), ]
+
+
+selected_columns <- asian_data[, c("Youthful", "Energetic", "White", "Queer",
+                                   "Straight", "Masc", "Fem", "Intelligent", "Authoritative", 
+                                   "Articulate", "Educated", "Asian")]
+
+##getting the correlation strenghts
+cor_results <- rcorr(as.matrix(selected_columns))
+cor_matrix <- cor_results$r
+
+# P-values matrix
+p_values_matrix <- cor_results$P
+
+
+
+
+
